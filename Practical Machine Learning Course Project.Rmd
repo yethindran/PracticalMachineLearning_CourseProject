@@ -1,0 +1,176 @@
+---
+title: "Personal physical activity prediction using machine learning"
+author: "Saravanan B"
+date: "Sunday, Jun 14, 2015"
+output: html_document
+---
+
+### Summary
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively.  In this project, we will use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. The goal of this project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set.
+    
+More information is available from the website here: http://groupware.les.inf.puc-rio.br/har. We thank the Human Activity Recognition Project for making this data available.
+
+We will split the training data into two parts: one for training and another for cross validation. The model will then be validated on the cross validation data set, out of sample errors calculated and examined.
+
+Then the model will be used to predict the 20 test cases.
+
+    
+
+### 1. Download and load files
+```{r}
+
+setInternet2(TRUE)
+
+url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+download.file(url, destfile = "pml-training.csv")
+trainDF <- read.csv("pml-training.csv")
+
+url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+download.file(url, destfile = "pml-testing.csv")
+testDF <- read.csv("pml-testing.csv")
+
+```
+
+### 2. Data analysis and pre-processing 
+A casual glance at the data shows many columns having NAs so we would need to eliminate those columns. The following code will eliminate columns having more than 90% NAs and Near Zero Variates. We will also filter the non deterministic variables like user id, timestamp, etc. from column positions 1 to 7. The columns passing this criteria will then be used for the model. We will create this as a function cleanData that can be called many times to pre-process the data which we will split shortly.
+
+```{r}
+
+cleanData <- function(df){
+    har_names <- names(df)
+    all_pos <- c()
+
+    for(i in 1:length(names(df)))
+    {
+        total_nas <- 0
+        x <- df[,i]
+  
+        for(j in 1:length(x))
+        {
+            if(is.na(x[j]) | x[j] == "")
+            {
+                total_nas <- total_nas + 1
+            }
+        }
+  
+        if(total_nas/length(x) < 0.9)
+        {
+            all_pos <- c(all_pos, i)
+        }
+    }
+
+# filter non deterministic variables like user id, timestamp, etc.
+    all_pos <- all_pos[8:length(all_pos)]
+    noNANames <- har_names[all_pos]
+
+#    library(caret)
+    nzv <- nearZeroVar(df,saveMetrics = TRUE)
+    noNZV <- df[,!as.logical(nzv$nzv)]
+    noNZVNames <- names(noNZV)
+
+
+    all_pos <- c()
+    for(i in 1:length(noNANames))
+    {
+        x <- noNANames[i]
+        if(x %in% noNZVNames)
+        {
+            all_pos <- c(all_pos, i)
+        }
+    }
+    modelNames <- noNANames[all_pos]
+
+    df1 <- df[, modelNames]
+
+    df1
+}
+
+```
+
+### 3. Split the training data set for cross validation
+The training data will be  split into two parts; one for training the model (60%), and the other for the cross validation(40%).
+
+```{r}
+
+library(caret)
+
+# Divide the training data into a training set and a validation set
+set.seed(100000)
+trainIdx <- createDataPartition(trainDF$classe, p = 0.6, list = FALSE)
+
+training <- trainDF[trainIdx,]
+cleanTraining <- cleanData(training)
+names(cleanTraining)
+
+validation <- trainDF[-trainIdx,]
+cleanValidation <- cleanData(validation)
+names(cleanValidation)
+
+```
+
+### 4. Fitting a model for the training data using Random Forest ML algorithm, then testing it out using the cross-validation data
+We will try fitting the training data using Random Forest/ Classification Tree techniques in the R caret package.
+
+### a) Random Forest
+
+```{r}
+
+library(randomForest)
+
+# enable multi-core processing
+library(doParallel)
+cl <- makeCluster(detectCores())
+registerDoParallel(cl)
+
+# model fit using random forest
+set.seed(95000)
+
+trCntrl <- trainControl(method = "cv", number = 4, allowParallel = TRUE,verboseIter = TRUE)
+randomForest <- train(classe ~ ., data = cleanTraining, method="rf", trainControl=trCntrl, importance=TRUE)
+
+randomForest
+
+
+```
+
+### 5. Evaluation of model and cross validation
+
+```{r}
+
+predRandForest <- predict(randomForest, cleanValidation)
+confMatrix <- confusionMatrix(predRandForest, cleanValidation$classe)
+print(confMatrix)
+
+# sample error for cross validation data
+sampleError <- sum(predRandForest == cleanValidation$classe)/nrow(cleanValidation)
+sampleError <- 1 - sampleError
+sampleError
+
+# out of sample Error
+outOfSampleError <- 1 - confMatrix$overall[1]
+outOfSampleError
+
+
+
+```
+
+### 6. Applying the prediction model on testing data
+
+Next we shall apply the prediction model on the testing data provided. Before that, we must clean the testing data to eliminate columns having NAs and Near Zero Variates just as we did with the training set. We also had to change the column named "problem_id" to "classe" to match with the model.
+
+```{r}
+
+cleanTesting <- cleanData(testDF)
+
+colnames(cleanTesting)[53] <- c("classe")
+names(cleanTesting)
+
+predTesting <- predict(randomForest, cleanTesting)
+predTesting
+
+
+```
+
+### 7. Conclusion
+
+The model predicted the 20 test cases with 100% accuracy.
